@@ -1,0 +1,40 @@
+# Version control
+.git
+.gitignore
+
+# Replit-specific files
+.replit
+.replitignore
+.replit-artifact
+.local
+.agents
+.cache
+
+# Node / pnpm
+**/node_modules
+**/.pnpm-store
+
+# Build outputs (rebuilt in Docker)
+**/dist
+**/.turbo
+
+# WhatsApp session auth files (mounted as a volume in production)
+artifacts/api-server/whatsapp-sessions
+
+# Logs
+*.log
+logs/
+
+# Editor / OS
+.DS_Store
+*.swp
+*.swo
+.idea
+.vscode
+
+# Test / coverage
+coverage/
+.nyc_output/
+
+# Attached assets (large files not needed in the image)
+attached_assets/

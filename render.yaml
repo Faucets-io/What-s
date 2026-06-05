@@ -1,0 +1,54 @@
+########################################################################
+# Render deployment configuration
+# Docs: https://render.com/docs/blueprint-spec
+#
+# Deploy steps:
+#   1. Push this repo to GitHub.
+#   2. Go to render.com → New → Blueprint, connect the repo.
+#   3. Render will create the web service automatically.
+#   4. In the service's Environment settings add these secrets:
+#        SUPABASE_DATABASE_URL  — your Supabase connection string
+#        MASTER_PASSKEY         — your master login passkey
+#   5. Under the service's Disks tab, the whatsapp-sessions disk is
+#      created automatically — do NOT remove it or all linked accounts
+#      will be logged out on every redeploy.
+########################################################################
+
+services:
+  - type: web
+    name: whatsapp-monitor
+    runtime: node
+    region: oregon
+    plan: starter
+    healthCheckPath: /api/healthz
+
+    buildCommand: >
+      npm install -g pnpm &&
+      pnpm install --frozen-lockfile &&
+      BASE_PATH=/ PORT=10000 pnpm --filter @workspace/whatsapp-monitor run build &&
+      pnpm --filter @workspace/api-server run build
+
+    startCommand: node --enable-source-maps artifacts/api-server/dist/index.mjs
+
+    envVars:
+      - key: NODE_ENV
+        value: production
+
+      - key: BASE_PATH
+        value: /
+
+      - key: PORT
+        value: 10000
+
+      - key: SUPABASE_DATABASE_URL
+        sync: false
+
+      - key: MASTER_PASSKEY
+        sync: false
+
+    # Persistent disk — WhatsApp auth credentials survive redeploys.
+    # Without this every linked account is logged out on every deploy.
+    disk:
+      name: whatsapp-sessions
+      mountPath: /app/whatsapp-sessions
+      sizeGB: 10

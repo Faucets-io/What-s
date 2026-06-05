@@ -1,0 +1,352 @@
+openapi: 3.1.0
+info:
+  # Do not change the title, if the title changes, the import paths will be broken
+  title: Api
+  version: 0.1.0
+  description: WhatsApp Monitor API specification
+servers:
+  - url: /api
+    description: Base API path
+tags:
+  - name: health
+    description: Health operations
+  - name: sessions
+    description: WhatsApp session management
+  - name: chats
+    description: Chat operations
+  - name: messages
+    description: Message operations
+paths:
+  /healthz:
+    get:
+      operationId: healthCheck
+      tags: [health]
+      summary: Health check
+      description: Returns server health status
+      responses:
+        "200":
+          description: Healthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthStatus"
+
+  /sessions:
+    get:
+      operationId: listSessions
+      tags: [sessions]
+      summary: List all linked WhatsApp sessions
+      responses:
+        "200":
+          description: List of sessions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Session"
+    post:
+      operationId: createSession
+      tags: [sessions]
+      summary: Create a new WhatsApp session
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateSessionBody"
+      responses:
+        "201":
+          description: Session created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Session"
+
+  /sessions/{sessionId}:
+    get:
+      operationId: getSession
+      tags: [sessions]
+      summary: Get session by ID
+      parameters:
+        - name: sessionId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Session found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Session"
+        "404":
+          description: Session not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      operationId: deleteSession
+      tags: [sessions]
+      summary: Disconnect and remove a WhatsApp session
+      parameters:
+        - name: sessionId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Session deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+
+  /sessions/{sessionId}/qr:
+    get:
+      operationId: getSessionQr
+      tags: [sessions]
+      summary: Get QR code for session linking
+      parameters:
+        - name: sessionId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: QR code data
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QrResponse"
+
+  /sessions/{sessionId}/chats:
+    get:
+      operationId: listChats
+      tags: [chats]
+      summary: List all chats for a session
+      parameters:
+        - name: sessionId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List of chats
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Chat"
+
+  /sessions/{sessionId}/chats/{chatId}/messages:
+    get:
+      operationId: listMessages
+      tags: [messages]
+      summary: Get messages in a chat
+      parameters:
+        - name: sessionId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: chatId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+        - name: before
+          in: query
+          schema:
+            type: string
+          description: Message ID to paginate before
+      responses:
+        "200":
+          description: List of messages
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Message"
+    post:
+      operationId: sendMessage
+      tags: [messages]
+      summary: Send a message in a chat
+      parameters:
+        - name: sessionId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: chatId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SendMessageBody"
+      responses:
+        "201":
+          description: Message sent
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Message"
+
+components:
+  schemas:
+    HealthStatus:
+      type: object
+      properties:
+        status:
+          type: string
+      required:
+        - status
+
+    Session:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        phone:
+          type: string
+          nullable: true
+        status:
+          type: string
+          enum: [pending, connected, disconnected]
+        qrCode:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+      required:
+        - id
+        - name
+        - phone
+        - status
+        - qrCode
+        - createdAt
+
+    CreateSessionBody:
+      type: object
+      properties:
+        name:
+          type: string
+      required:
+        - name
+
+    QrResponse:
+      type: object
+      properties:
+        qrCode:
+          type: string
+          nullable: true
+        status:
+          type: string
+          enum: [pending, connected, disconnected]
+      required:
+        - qrCode
+        - status
+
+    Chat:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        phone:
+          type: string
+          nullable: true
+        lastMessage:
+          type: string
+          nullable: true
+        lastMessageTime:
+          type: string
+          nullable: true
+        unreadCount:
+          type: integer
+        isGroup:
+          type: boolean
+        profilePicture:
+          type: string
+          nullable: true
+      required:
+        - id
+        - name
+        - phone
+        - lastMessage
+        - lastMessageTime
+        - unreadCount
+        - isGroup
+        - profilePicture
+
+    Message:
+      type: object
+      properties:
+        id:
+          type: string
+        body:
+          type: string
+        fromMe:
+          type: boolean
+        timestamp:
+          type: integer
+        senderName:
+          type: string
+          nullable: true
+        type:
+          type: string
+          enum: [text, image, video, audio, document, sticker, other]
+      required:
+        - id
+        - body
+        - fromMe
+        - timestamp
+        - senderName
+        - type
+
+    SendMessageBody:
+      type: object
+      properties:
+        message:
+          type: string
+      required:
+        - message
+
+    SuccessResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        message:
+          type: string
+      required:
+        - success
+        - message
+
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+      required:
+        - error
