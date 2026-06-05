@@ -14,8 +14,9 @@ import { Badge } from "@/components/ui/badge";
 
 // ── QR Scanner ───────────────────────────────────────────────────────────────
 function QrScanner({ sessionId }: { sessionId: string }) {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data: qrData, isLoading } = useGetSessionQr(sessionId, {
-    query: { refetchInterval: 3000 },
+    query: { refetchInterval: 3000 } as any,
   });
 
   if (isLoading || !qrData?.qrCode) {

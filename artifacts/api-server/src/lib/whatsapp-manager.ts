@@ -68,7 +68,7 @@ export interface StatusInfo {
   id: string;
   participantJid: string;
   participantName: string | null;
-  type: "text" | "image" | "video" | "audio" | "other";
+  type: "text" | "image" | "video" | "audio" | "document" | "sticker" | "other";
   body: string;
   timestamp: number;
   messageId: string;
@@ -173,7 +173,7 @@ function saveMessageToDB(
   chatId: string,
   msg: proto.IWebMessageInfo
 ) {
-  if (!msg.key.id) return;
+  if (!msg.key?.id) return;
   const type = getMessageType(msg);
   db.insert(messagesTable)
     .values({
@@ -188,7 +188,7 @@ function saveMessageToDB(
       rawMessage: MEDIA_TYPES.has(type) ? JSON.stringify(msg) : null,
     })
     .onConflictDoNothing()
-    .catch((err) => logger.error({ err }, "Failed to save message to DB"));
+    .catch((err: unknown) => logger.error({ err }, "Failed to save message to DB"));
 }
 
 /**
@@ -200,7 +200,7 @@ async function saveMessagesBatch(
   msgs: proto.IWebMessageInfo[]
 ) {
   const CHUNK = 200;
-  const valid = msgs.filter((m) => m.key.id && m.key.remoteJid);
+  const valid = msgs.filter((m) => m.key?.id && m.key?.remoteJid);
   for (let i = 0; i < valid.length; i += CHUNK) {
     const chunk = valid.slice(i, i + CHUNK);
     await db
@@ -210,9 +210,9 @@ async function saveMessagesBatch(
           const type = getMessageType(msg);
           return {
             sessionId,
-            chatId: msg.key.remoteJid!,
-            messageId: msg.key.id!,
-            fromMe: msg.key.fromMe ?? false,
+            chatId: msg.key!.remoteJid!,
+            messageId: msg.key!.id!,
+            fromMe: msg.key!.fromMe ?? false,
             body: extractMessageText(msg),
             type,
             timestamp: Number(msg.messageTimestamp) || 0,
@@ -227,7 +227,7 @@ async function saveMessagesBatch(
           rawMessage: sql`CASE WHEN ${messagesTable.rawMessage} IS NULL THEN EXCLUDED.raw_message ELSE ${messagesTable.rawMessage} END`,
         },
       })
-      .catch((err) => logger.error({ err }, "Failed to batch-save messages"));
+      .catch((err: unknown) => logger.error({ err }, "Failed to batch-save messages"));
   }
 }
 
@@ -269,7 +269,7 @@ function saveChatToDB(
         updatedAt: sql`EXCLUDED.updated_at`,
       },
     })
-    .catch((err) => logger.error({ err }, "Failed to save chat to DB"));
+    .catch((err: unknown) => logger.error({ err }, "Failed to save chat to DB"));
 }
 
 async function saveChatsBatch(
@@ -307,7 +307,7 @@ async function saveChatsBatch(
           updatedAt: sql`EXCLUDED.updated_at`,
         },
       })
-      .catch((err) => logger.error({ err }, "Failed to batch-save chats"));
+      .catch((err: unknown) => logger.error({ err }, "Failed to batch-save chats"));
   }
 }
 
@@ -337,7 +337,7 @@ async function saveContactsBatch(sessionId: string, contacts: Contact[]) {
           updatedAt: sql`EXCLUDED.updated_at`,
         },
       })
-      .catch((err) => logger.error({ err }, "Failed to batch-save contacts"));
+      .catch((err: unknown) => logger.error({ err }, "Failed to batch-save contacts"));
   }
 }
 
@@ -414,10 +414,8 @@ function startWatchdog(sessionId: string, session: ActiveSession): ReturnType<ty
 
 // ── Database-backed auth state ─────────────────────────────────────────────────
 
-async function useDatabaseAuthState(sessionId: string): Promise<{
-  state: { creds: ReturnType<typeof initAuthCreds>; keys: object };
-  saveCreds: () => Promise<void>;
-}> {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function useDatabaseAuthState(sessionId: string): Promise<{ state: any; saveCreds: () => Promise<void> }> {
   const [row] = await db
     .select({ authData: sessionsTable.authData })
     .from(sessionsTable)
@@ -694,7 +692,8 @@ export async function startSession(sessionId: string): Promise<void> {
     }, 2000);
   }
 
-  socket.ev.on("contacts.set", ({ contacts }) => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  (socket.ev as any).on("contacts.set", ({ contacts }: { contacts: Contact[] }) => {
     for (const c of contacts) upsertContact(c);
     scheduleContactSave();
   });
@@ -704,6 +703,7 @@ export async function startSession(sessionId: string): Promise<void> {
   });
   socket.ev.on("contacts.update", (updates) => {
     for (const u of updates) {
+      if (!u.id) continue;
       const existing = session.contacts.get(u.id) ?? ({ id: u.id } as Contact);
       upsertContact({ ...existing, ...u } as Contact);
     }
@@ -711,20 +711,23 @@ export async function startSession(sessionId: string): Promise<void> {
   });
 
   // ── Chat events ─────────────────────────────────────────────────────────────
-  socket.ev.on("chats.set", ({ chats }) => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  (socket.ev as any).on("chats.set", ({ chats }: { chats: Array<{ id?: string | null; name?: string | null; unreadCount?: number | null }> }) => {
     for (const chat of chats) {
+      if (!chat.id) continue;
       session.chats.set(chat.id, {
         id: chat.id,
-        name: chat.name,
+        name: chat.name ?? undefined,
         unreadCount: chat.unreadCount ?? 0,
         lastMessage: null,
       });
     }
-    saveChatsBatch(sessionId, chats.map((c) => ({ id: c.id, name: c.name, unreadCount: c.unreadCount ?? 0 }))).catch(() => {});
+    saveChatsBatch(sessionId, chats.filter((c) => !!c.id).map((c) => ({ id: c.id!, name: c.name, unreadCount: c.unreadCount ?? 0 }))).catch(() => {});
   });
 
   socket.ev.on("chats.upsert", (chats) => {
     for (const chat of chats) {
+      if (!chat.id) continue;
       const existing = session.chats.get(chat.id);
       session.chats.set(chat.id, {
         id: chat.id,
@@ -754,11 +757,12 @@ export async function startSession(sessionId: string): Promise<void> {
     }
 
     for (const chat of chats) {
+      if (!chat.id) continue;
       const existing = session.chats.get(chat.id);
       if (!existing) {
         session.chats.set(chat.id, {
           id: chat.id,
-          name: chat.name,
+          name: chat.name ?? undefined,
           unreadCount: chat.unreadCount ?? 0,
           lastMessage: null,
         });
@@ -768,7 +772,7 @@ export async function startSession(sessionId: string): Promise<void> {
     if (chats.length > 0) {
       await saveChatsBatch(
         sessionId,
-        chats.map((c) => ({ id: c.id, name: c.name, unreadCount: c.unreadCount ?? 0 }))
+        chats.filter((c) => !!c.id).map((c) => ({ id: c.id!, name: c.name, unreadCount: c.unreadCount ?? 0 }))
       ).catch(() => {});
     }
 
@@ -805,9 +809,10 @@ export async function startSession(sessionId: string): Promise<void> {
   });
 
   // ── Real-time message events ────────────────────────────────────────────────
-  socket.ev.on("messages.set", ({ messages: msgs }) => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  (socket.ev as any).on("messages.set", ({ messages: msgs }: { messages: proto.IWebMessageInfo[] }) => {
     for (const msg of msgs) {
-      const chatId = msg.key.remoteJid;
+      const chatId = msg.key?.remoteJid;
       if (!chatId) continue;
       const existing = session.messages.get(chatId) ?? [];
       existing.push(msg);
@@ -1077,7 +1082,7 @@ export async function getMessages(
     .orderBy(desc(messagesTable.timestamp))
     .limit(limit);
 
-  return rows.reverse().map((m) => ({
+  return rows.reverse().map((m: typeof rows[number]) => ({
     id: m.messageId,
     body: m.body,
     fromMe: m.fromMe,
@@ -1157,12 +1162,12 @@ export async function getStatuses(
   const statusMsgs = session.messages.get("status@broadcast") ?? [];
   const filtered =
     fromMe !== undefined
-      ? statusMsgs.filter((m) => (m.key.fromMe ?? false) === fromMe)
-      : statusMsgs.filter((m) => !m.key.fromMe);
+      ? statusMsgs.filter((m) => (m.key?.fromMe ?? false) === fromMe)
+      : statusMsgs.filter((m) => !m.key?.fromMe);
 
   const byParticipant = new Map<string, proto.IWebMessageInfo[]>();
   for (const msg of filtered) {
-    const participant = msg.key.participant || msg.key.remoteJid || "";
+    const participant = msg.key?.participant || msg.key?.remoteJid || "";
     if (!participant) continue;
     const arr = byParticipant.get(participant) ?? [];
     arr.push(msg);
@@ -1174,8 +1179,8 @@ export async function getStatuses(
     msgs.sort((a, b) => Number(a.messageTimestamp) - Number(b.messageTimestamp));
     for (const msg of msgs) {
       result.push({
-        id: msg.key.id || "",
-        messageId: msg.key.id || "",
+        id: msg.key?.id || "",
+        messageId: msg.key?.id || "",
         participantJid: participant,
         participantName: msg.pushName || null,
         type: getMessageType(msg),
@@ -1225,7 +1230,7 @@ export async function downloadMedia(
 
   if (session) {
     const msgs = session.messages.get(chatId) ?? [];
-    rawMsg = msgs.find((m) => m.key.id === messageId) ?? null;
+    rawMsg = msgs.find((m) => m.key?.id === messageId) ?? null;
   }
 
   if (!rawMsg) {
@@ -1254,7 +1259,8 @@ export async function downloadMedia(
 
   // ── 3. Download and cache to disk ──────────────────────────────────────────
   try {
-    const stream = await downloadMediaMessage(rawMsg, "buffer", {});
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const stream = await downloadMediaMessage(rawMsg as any, "buffer", {});
     const buffer = stream as Buffer;
     const ext = mimeToExt(mimeType);
     fs.writeFileSync(`${cacheBase}.${ext}`, buffer);

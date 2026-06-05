@@ -4,7 +4,7 @@ import { useSendMessage, useListChats, getListChatsQueryKey } from "@workspace/a
 import { useQueryClient, useQuery } from "@tanstack/react-query";
 import {
   ArrowLeft, Loader2, Send, Play, Pause, FileText, ChevronUp,
-  Search, X, Mic, Square,
+  Search, X, Mic, Square, Video as VideoIcon,
 } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -360,7 +360,8 @@ export default function ConversationPage() {
     setRecordingSeconds(0);
   };
 
-  const { data: chats = [] } = useListChats(sessionId, { query: { enabled: !!sessionId } });
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data: chats = [] } = useListChats(sessionId, { query: { enabled: !!sessionId } as any });
   const chat = chats.find((c) => c.id === chatId);
   const chatName = chat?.name || (chatId ? chatId.split("@")[0] : "Chat");
 

@@ -168,7 +168,7 @@ router.get("/auth/users", async (req, res) => {
 
   // Count sessions per user from the sessions table
   const { sessionsTable } = await import("@workspace/db");
-  const allSessions = await db.select({ id: sessionsTable.id, userId: sessionsTable.userId, status: sessionsTable.status }).from(sessionsTable).catch(() => []);
+  const allSessions = await db.select({ id: sessionsTable.id, userId: sessionsTable.userId, status: sessionsTable.status }).from(sessionsTable).catch(() => [] as Array<{ id: string; userId: string | null; status: string }>);
 
   const result = users.map((u) => {
     const userSessions = allSessions.filter((s) => s.userId === u.id);

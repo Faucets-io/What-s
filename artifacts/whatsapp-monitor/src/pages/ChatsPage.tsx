@@ -12,15 +12,14 @@ export default function ChatsPage() {
   const [search, setSearch] = useState("");
   const queryClient = useQueryClient();
 
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data: session } = useGetSession(sessionId, {
-    query: { enabled: !!sessionId }
+    query: { enabled: !!sessionId } as any,
   });
 
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data: chats = [], isLoading } = useListChats(sessionId, {
-    query: {
-      enabled: !!sessionId,
-      refetchInterval: 30_000,
-    }
+    query: { enabled: !!sessionId, refetchInterval: 30_000 } as any,
   });
 
   // Real-time updates via SSE
