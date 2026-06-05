@@ -24,7 +24,7 @@ services:
 
     buildCommand: >
       npm install -g pnpm &&
-      pnpm install --frozen-lockfile &&
+      pnpm install --no-frozen-lockfile &&
       BASE_PATH=/ PORT=10000 pnpm --filter @workspace/whatsapp-monitor run build &&
       pnpm --filter @workspace/api-server run build
 
