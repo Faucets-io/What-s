@@ -23,7 +23,7 @@ services:
     healthCheckPath: /api/healthz
 
     buildCommand: >
-      npm install -g pnpm &&
+      npm install -g pnpm@9 &&
       pnpm install --no-frozen-lockfile &&
       BASE_PATH=/ PORT=10000 pnpm --filter @workspace/whatsapp-monitor run build &&
       pnpm --filter @workspace/api-server run build
