@@ -521,6 +521,22 @@ export async function startSession(sessionId: string): Promise<void> {
   // Don't start if explicitly stopped
   if (stoppedSessions.has(sessionId)) return;
 
+  // Close any existing socket BEFORE creating a new one.
+  // Without this, the old socket stays connected while the new one opens,
+  // WhatsApp sees two simultaneous sessions → sends "conflict:replaced" to both
+  // → infinite reconnect loop and messages never deliver.
+  const existingSession = activeSessions.get(sessionId);
+  if (existingSession) {
+    if (existingSession.watchdogTimer) {
+      clearInterval(existingSession.watchdogTimer);
+      existingSession.watchdogTimer = null;
+    }
+    activeSessions.delete(sessionId);
+    try { existingSession.socket.end(undefined); } catch {}
+    // Brief pause so WhatsApp's servers register the old connection as closed
+    await new Promise((r) => setTimeout(r, 1_500));
+  }
+
   const { state, saveCreds } = await useDatabaseAuthState(sessionId);
   const { version } = await fetchLatestBaileysVersion();
 
@@ -969,10 +985,23 @@ export async function requestPairingCode(
 
 // ── Contact name resolution ───────────────────────────────────────────────────
 
+/**
+ * Strip the device suffix from a WhatsApp JID so lookups are consistent.
+ * "2348012345678:2@s.whatsapp.net" → "2348012345678@s.whatsapp.net"
+ */
+function normalizeJid(jid: string): string {
+  if (jid.includes(":") && jid.includes("@")) {
+    const [user, host] = jid.split("@");
+    return `${user.split(":")[0]}@${host}`;
+  }
+  return jid;
+}
+
 function resolveContactInfo(
   chatId: string,
   chatName: string | undefined | null,
-  session: ActiveSession | null
+  session: ActiveSession | null,
+  dbContacts?: Map<string, { name: string | null; verifiedName: string | null; notify: string | null }>
 ): { name: string; phone: string | null } {
   const isGroup = chatId.endsWith("@g.us");
   const isLid = chatId.endsWith("@lid");
@@ -987,10 +1016,17 @@ function resolveContactInfo(
     resolvedJid = chatId;
   }
 
+  // Try in-memory contacts map first (multiple JID formats)
   const contact = session
-    ? ((resolvedJid ? session.contacts.get(resolvedJid) : null) ??
+    ? ((resolvedJid ? (session.contacts.get(resolvedJid) ?? session.contacts.get(normalizeJid(resolvedJid))) : null) ??
        session.contacts.get(chatId) ??
+       session.contacts.get(normalizeJid(chatId)) ??
        null)
+    : null;
+
+  // Fall back to DB contacts (populated in getChats when session is offline)
+  const dbContact = dbContacts
+    ? (dbContacts.get(resolvedJid ?? chatId) ?? dbContacts.get(normalizeJid(resolvedJid ?? chatId)) ?? null)
     : null;
 
   const phone = resolvedJid
@@ -1001,9 +1037,12 @@ function resolveContactInfo(
 
   const name =
     contact?.name ||
+    dbContact?.name ||
     contact?.verifiedName ||
+    dbContact?.verifiedName ||
     chatName ||
     contact?.notify ||
+    dbContact?.notify ||
     phone ||
     chatId.split("@")[0];
 
@@ -1015,6 +1054,21 @@ function resolveContactInfo(
 export async function getChats(sessionId: string): Promise<ChatInfo[]> {
   const session = activeSessions.get(sessionId) ?? null;
 
+  // Load contacts from DB — used as fallback when the session is offline or the
+  // in-memory contacts map hasn't been fully populated yet.
+  const dbContactRows = await db
+    .select()
+    .from(contactsTable)
+    .where(eq(contactsTable.sessionId, sessionId))
+    .catch(() => [] as typeof contactsTable.$inferSelect[]);
+
+  const dbContacts = new Map<string, { name: string | null; verifiedName: string | null; notify: string | null }>();
+  for (const row of dbContactRows) {
+    dbContacts.set(row.jid, { name: row.name, verifiedName: row.verifiedName, notify: row.notify });
+    // Also index by normalised JID so lookups survive device-suffix variations
+    dbContacts.set(normalizeJid(row.jid), { name: row.name, verifiedName: row.verifiedName, notify: row.notify });
+  }
+
   const dbChats = await db
     .select()
     .from(chatsTable)
@@ -1024,7 +1078,7 @@ export async function getChats(sessionId: string): Promise<ChatInfo[]> {
 
   for (const dbChat of dbChats) {
     if (dbChat.chatId === "status@broadcast" || dbChat.chatId.endsWith("@broadcast")) continue;
-    const { name, phone } = resolveContactInfo(dbChat.chatId, dbChat.name, session);
+    const { name, phone } = resolveContactInfo(dbChat.chatId, dbChat.name, session, dbContacts);
     resultMap.set(dbChat.chatId, {
       id: dbChat.chatId,
       name,
@@ -1040,7 +1094,7 @@ export async function getChats(sessionId: string): Promise<ChatInfo[]> {
   if (session) {
     for (const [chatId, chat] of session.chats) {
       if (chatId === "status@broadcast" || chatId.endsWith("@broadcast")) continue;
-      const { name, phone } = resolveContactInfo(chatId, chat.name, session);
+      const { name, phone } = resolveContactInfo(chatId, chat.name, session, dbContacts);
 
       let lastMessage: string | null = null;
       let lastMessageTime: string | null = null;
