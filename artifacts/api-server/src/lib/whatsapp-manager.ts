@@ -531,6 +531,7 @@ export async function startSession(sessionId: string): Promise<void> {
     auth: state,
     logger: baileysLogger,
     printQRInTerminal: false,
+    // Mimic a real WhatsApp Web session on Chrome/Ubuntu
     browser: Browsers.ubuntu("Chrome"),
     // Full history: WhatsApp sends ALL past messages when linking a new device
     syncFullHistory: true,
@@ -542,6 +543,34 @@ export async function startSession(sessionId: string): Promise<void> {
     maxMsgRetryCount: 5,
     // Connect timeout
     connectTimeoutMs: 60_000,
+    // Don't generate link previews — only bots do this automatically
+    generateHighQualityLinkPreview: false,
+    // Timeout for stale queries — prevents the session looking like a broken client
+    defaultQueryTimeoutMs: 60_000,
+    // getMessage: required so WhatsApp can retry E2E-encrypted message delivery.
+    // Without this, WhatsApp cannot verify decryption succeeded and may flag the
+    // session as broken/suspicious after repeated retries.
+    getMessage: async (key) => {
+      try {
+        if (!key.id || !key.remoteJid) return undefined;
+        const rows = await db
+          .select({ rawMessage: messagesTable.rawMessage })
+          .from(messagesTable)
+          .where(
+            and(
+              eq(messagesTable.sessionId, sessionId),
+              eq(messagesTable.chatId, key.remoteJid),
+              eq(messagesTable.messageId, key.id)
+            )
+          )
+          .limit(1);
+        if (!rows[0]?.rawMessage) return undefined;
+        const parsed = JSON.parse(rows[0].rawMessage) as proto.IWebMessageInfo;
+        return parsed.message ?? undefined;
+      } catch {
+        return undefined;
+      }
+    },
   });
 
   // Pre-populate contacts from DB so names show correctly after server restarts
@@ -1092,6 +1121,12 @@ export async function getMessages(
   }));
 }
 
+/** Random delay between min and max ms — humanises send timing */
+function humanDelay(minMs = 800, maxMs = 2500): Promise<void> {
+  const ms = minMs + Math.random() * (maxMs - minMs);
+  return new Promise((r) => setTimeout(r, ms));
+}
+
 export async function sendMessage(
   sessionId: string,
   chatId: string,
@@ -1099,6 +1134,14 @@ export async function sendMessage(
 ): Promise<MessageInfo | null> {
   const session = activeSessions.get(sessionId);
   if (!session || session.status !== "connected") return null;
+
+  // Simulate typing presence — makes the session look like a real human
+  await session.socket.sendPresenceUpdate("composing", chatId);
+  // Hold "typing..." for a duration proportional to message length (like a real person)
+  const typingMs = Math.min(1000 + text.length * 35, 4000);
+  await new Promise((r) => setTimeout(r, typingMs));
+  await session.socket.sendPresenceUpdate("paused", chatId);
+  await humanDelay(300, 800);
 
   const sent = await session.socket.sendMessage(chatId, { text });
   if (!sent) return null;
